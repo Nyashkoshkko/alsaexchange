@@ -1,2 +1,4 @@
-//extern int alsaexchange_putsamples(void * buf, int cnt);
-int alsaexchange_putsamples(void * buf, int cnt);
+#ifdef __cplusplus
+extern "C" 
+#endif
+int alsaexchange_init(int (*FillOutputBuffers_ptr)(int * LeftOutput, int * RightOutput, int SamplesCount));
