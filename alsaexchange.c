@@ -75,7 +75,7 @@ int alsaexchange_dummy_main( int argc, char *argv[])
         gtk_container_add(GTK_CONTAINER(alsaexchange_dummy_window), alsaexchange_dummy_button2);
         g_signal_connect(GTK_BUTTON(alsaexchange_dummy_button2), "clicked", G_CALLBACK(state_to_2), NULL);
         
-        label = gtk_label_new ("STATE = ??");
+        label = gtk_label_new ("STATE = ???");
         gtk_container_add(GTK_CONTAINER(alsaexchange_dummy_window), label);
 
 
