@@ -1,7 +1,7 @@
 #include <gtk/gtk.h> /* подключаем GTK+ */
 
 GtkWidget *alsaexchange_dummy_window;
-GtkWidget * label;
+GtkLabel * label;
 
 /* выводит приветствие */
 void alsaexchange_dummy_welcome (GtkButton *button, gpointer data)
@@ -17,17 +17,32 @@ int my_gtk_init(int argc, char *argv[])
     return 0;
 }
 
+void update_ui();
 
 int alsa_state = -1;
 
 void state_to_1 (GtkButton *button, gpointer data)
 {
     alsa_state = 1;
+    
+    update_ui();
 }
 
 void state_to_2 (GtkButton *button, gpointer data)
 {
     alsa_state = 2;
+    
+    update_ui();
+}
+
+void update_ui()
+{
+    char str[80];
+    
+    sprintf(str,"STATE = %i", alsa_state);
+    //gtk_window_set_title(GTK_WINDOW(label), str);
+    gtk_label_set_text(label,str);
+    
 }
 
 /* эта функция будет выполнена первой */
@@ -64,21 +79,31 @@ int alsaexchange_dummy_main( int argc, char *argv[])
         /* создать кнопку с меткой */   
         alsaexchange_dummy_button = gtk_button_new_with_label("Привет, ХабраХабр!");
         /* упаковать нашу кнопку в окно */
-        gtk_container_add(GTK_CONTAINER(alsaexchange_dummy_window), alsaexchange_dummy_button);
+        
+        GtkWidget *grid = gtk_grid_new();
+        gtk_container_add(GTK_CONTAINER(alsaexchange_dummy_window), grid);
+        gtk_grid_attach (GTK_GRID (grid), alsaexchange_dummy_button, 0, 0, 1, 1);
+        
+        
+        //gtk_container_add(GTK_CONTAINER(alsaexchange_dummy_window), alsaexchange_dummy_button);
+        
         
         
         GtkWidget * alsaexchange_dummy_button1 = gtk_button_new_with_label("state_to_1");
-        gtk_container_add(GTK_CONTAINER(alsaexchange_dummy_window), alsaexchange_dummy_button1);
+        //gtk_container_add(GTK_CONTAINER(alsaexchange_dummy_window), alsaexchange_dummy_button1);
+        gtk_grid_attach (GTK_GRID (grid), alsaexchange_dummy_button1, 1, 0, 1, 1);
         g_signal_connect(GTK_BUTTON(alsaexchange_dummy_button1), "clicked", G_CALLBACK(state_to_1), NULL);
         
         GtkWidget * alsaexchange_dummy_button2 = gtk_button_new_with_label("state_to_2");
-        gtk_container_add(GTK_CONTAINER(alsaexchange_dummy_window), alsaexchange_dummy_button2);
+        //gtk_container_add(GTK_CONTAINER(alsaexchange_dummy_window), alsaexchange_dummy_button2);
+        gtk_grid_attach (GTK_GRID (grid), alsaexchange_dummy_button2, 0, 1, 2, 1);
         g_signal_connect(GTK_BUTTON(alsaexchange_dummy_button2), "clicked", G_CALLBACK(state_to_2), NULL);
         
-        label = gtk_label_new ("STATE = ???");
-        gtk_container_add(GTK_CONTAINER(alsaexchange_dummy_window), label);
+        label = (GtkLabel *)gtk_label_new ("STATE = ???");
+        gtk_grid_attach (GTK_GRID (grid), (GtkWidget *)label, 1, 2, 3, 2);
+        //gtk_container_add(GTK_CONTAINER(alsaexchange_dummy_window), label);
 
-
+        
         
         
         // v habre etoi shtuki ne bilo
@@ -90,6 +115,8 @@ int alsaexchange_dummy_main( int argc, char *argv[])
         
         /* когда пользователь кликнет по ней, то вызвать ф-цию welcome */
         g_signal_connect(GTK_BUTTON(alsaexchange_dummy_button), "clicked", G_CALLBACK(alsaexchange_dummy_welcome), NULL);
+        
+        update_ui();
         
         /* передаём управление GTK+ */
         gtk_main();
