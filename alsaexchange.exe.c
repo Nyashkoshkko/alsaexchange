@@ -6,11 +6,22 @@ using namespace std;
 
 #define MAXMODULE 255 
 
-typedef int (WINAPI*cfunc)(void*,int);
+typedef int (WINAPI*cfunc)(void*);
 
 //cfunc NumberList;
-cfunc alsaexchange_putsamples;
+cfunc alsaexchange_init;
 HINSTANCE hLib;
+
+int (*alsaexchange_exit)();
+
+
+int FillOutputBuffers(int * LeftOutput, int * RightOutput, int SamplesCount)
+{
+    static int num = 0;
+    printf("%04i: I Fill buffers\n", num++);
+}
+
+
 
 //int main(int argc, char *argv[]) 
 int run_func_drom_dll()
@@ -29,22 +40,23 @@ int run_func_drom_dll()
       //GetModuleFileName((HMODULE)hLib, (LPTSTR)mod, MAXMODULE);
       //cout << "Library loaded: " << mod << endl;
       
-      alsaexchange_putsamples=(cfunc)GetProcAddress((HMODULE)hLib, "alsaexchange_putsamples");
+      alsaexchange_init=(cfunc)GetProcAddress((HMODULE)hLib, "alsaexchange_init");
+      alsaexchange_exit = ( int (*)() )GetProcAddress((HMODULE)hLib, "alsaexchange_exit");
       
       fRun = 0;
     }
       
-      if(alsaexchange_putsamples==NULL) {
+      if(alsaexchange_init==NULL) {
 
-           cout << "Unable to load function(s) alsaexchange_putsamples" << endl;
+           cout << "Unable to load function(s) alsaexchange_init" << endl;
            //FreeLibrary((HMODULE)hLib);
            //return -1;
       }
       else
       {
-          cout << "calling alsaexchange_putsamples((void*)0x4040abcd,-40404242).." << endl;
-          int res = alsaexchange_putsamples((void*)0x4040abcd,-40404242);
-          printf("alsaexchange_putsamples ret %i\n", res);
+          //cout << "calling alsaexchange_putsamples((void*)0x4040abcd,-40404242).." << endl;
+          int res = alsaexchange_init((void*)&FillOutputBuffers);
+          //printf("alsaexchange_putsamples ret %i\n", res);
       }
 
      // FreeLibrary((HMODULE)hLib);
@@ -52,7 +64,12 @@ int run_func_drom_dll()
 } 
 int free_dll()
 {
-    if(hLib != NULL) FreeLibrary((HMODULE)hLib);
+    
+    if(hLib != NULL) 
+    {
+        alsaexchange_exit();
+        FreeLibrary((HMODULE)hLib);
+    }
     return 0;
 }
 
@@ -119,7 +136,7 @@ LRESULT CALLBACK MainWinProc(HWND hw,UINT msg,WPARAM wp,LPARAM lp) {
    return 0;
   case WM_DESTROY:
       
-    printf("WINAPI WM_DESTROY called\n");
+    //printf("WINAPI WM_DESTROY called\n");
     free_dll();
     
       
