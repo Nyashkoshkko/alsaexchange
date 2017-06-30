@@ -11,6 +11,8 @@ struct SALSACardRecord
     std::string ID;
     int Device;
     bool Online; // 0 - offline, 1 - online
+    snd_pcm_format_t SampleFormat;
+    int SampleRate;
     
     GtkLabel * StatusLabel;
     snd_pcm_t * handle;
@@ -20,13 +22,87 @@ std::vector<struct SALSACardRecord> SoundCards;
 // this lib(libalsaexchange.so) call this function for fill sound data from WINAPI part of this application
 int (*FillOutputBuffers)(int * LeftOutput, int * RightOutput, int SamplesCount);
 
+//Debug datas
+GtkLabel * DebugLabel1, * DebugLabel4, * DebugLabel10;
+int CallsCounter = 0, last_counter1 = 0, last_counter4 = 0, last_counter10 = 0;
+static gboolean Timer1Sec(gpointer data)
+{
+    char str[200];
+    
+    //static int last_counter = 0;
+    
+    int rrate = 1;
+    for(SALSACardRecord Cur : SoundCards)
+    {
+        if(Cur.Online)
+        {
+            rrate = Cur.SampleRate;
+        }
+    }
+    int last_sec_calls = CallsCounter - last_counter1;
+    
+    snprintf(str, sizeof(str) - 1, "CALLS = %i, last sec calls = %i, samples = %i", CallsCounter, last_sec_calls, rrate/((last_sec_calls == 0) ? (rrate*10) : (last_sec_calls)));
+    
+    last_counter1 = CallsCounter;
+    
+    gtk_label_set_text(DebugLabel1, str);
+    return true;
+}
+static gboolean Timer4Sec(gpointer data)
+{
+    char str[200];
+    
+    //static int last_counter = 0;
+    
+    int rrate = 1;
+    for(SALSACardRecord Cur : SoundCards)
+    {
+        if(Cur.Online)
+        {
+            rrate = Cur.SampleRate;
+        }
+    }
+    int last_sec_calls = CallsCounter - last_counter4;
+    
+    snprintf(str, sizeof(str) - 1, "CALLS = %i, last sec calls = %i, samples = %i", CallsCounter, last_sec_calls/4, (rrate*4)/((last_sec_calls == 0) ? (rrate*10) : (last_sec_calls)));
+    
+    last_counter4 = CallsCounter;
+    
+    gtk_label_set_text(DebugLabel4, str);
+    return true;
+}
+static gboolean Timer10Sec(gpointer data)
+{
+    char str[200];
+    
+    //static int last_counter = 0;
+    
+    int rrate = 1;
+    for(SALSACardRecord Cur : SoundCards)
+    {
+        if(Cur.Online)
+        {
+            rrate = Cur.SampleRate;
+        }
+    }
+    int last_sec_calls = CallsCounter - last_counter10;
+    
+    snprintf(str, sizeof(str) - 1, "CALLS = %i, last sec calls = %i, samples = %i", CallsCounter, last_sec_calls/10, (rrate*10)/((last_sec_calls == 0) ? (rrate*10) : (last_sec_calls)));
+    
+    last_counter10 = CallsCounter;
+    
+    gtk_label_set_text(DebugLabel10, str);
+    return true;
+}
+
+
 void update_ui()
 {
     for(SALSACardRecord Cur : SoundCards)
     {
         if(Cur.Online)
         {
-            gtk_label_set_markup (Cur.StatusLabel, "<span foreground=\"green\" weight = \"bold\">  ONLINE</span>");
+            gtk_label_set_markup (Cur.StatusLabel, std::string("<span foreground=\"green\" weight = \"bold\">  ONLINE</span>  (" + std::to_string(Cur.SampleRate) + ", " + std::string(snd_pcm_format_name(Cur.SampleFormat)) + ")").c_str());
         }
         else 
         {
@@ -35,30 +111,67 @@ void update_ui()
     }
 }
 
+
+
+snd_pcm_sframes_t period_size;
+static int xrun_recovery(snd_pcm_t *handle, int err)
+{
+        //if (verbose)
+                printf("stream recovery\n");
+        if (err == -EPIPE) {    /* under-run */
+                err = snd_pcm_prepare(handle);
+                if (err < 0)
+                        printf("Can't recovery from underrun, prepare failed: %s\n", snd_strerror(err));
+                return 0;
+        } else if (err == -ESTRPIPE) {
+                while ((err = snd_pcm_resume(handle)) == -EAGAIN)
+                        sleep(1);       /* wait until the suspend flag is released */
+                if (err < 0) {
+                        err = snd_pcm_prepare(handle);
+                        if (err < 0)
+                                printf("Can't recovery from suspend, prepare failed: %s\n", snd_strerror(err));
+                }
+                return 0;
+        }
+        return err;
+}
+struct async_private_data {
+        signed short *samples;
+        snd_pcm_channel_area_t *areas;
+        double phase;
+};
 static void async_direct_callback(snd_async_handler_t *ahandler)
 {
-        snd_pcm_t *handle = snd_async_handler_get_pcm(ahandler);
-        struct async_private_data *data = snd_async_handler_get_callback_private(ahandler);
+        snd_pcm_t *handle = (snd_pcm_t *)snd_async_handler_get_pcm(ahandler);
+        struct async_private_data *data = (struct async_private_data *)snd_async_handler_get_callback_private(ahandler);
         const snd_pcm_channel_area_t *my_areas;
         snd_pcm_uframes_t offset, frames, size;
         snd_pcm_sframes_t avail, commitres;
         snd_pcm_state_t state;
         int first = 0, err;
- /*       
+        
+        //printf("EBALO RAZOBIYU!!11\n");
+        CallsCounter++;
+        
+        //snd_pcm_mmap_begin(handle, &my_areas, &offset, &frames);
+        //snd_pcm_mmap_commit(handle, offset, frames);
+        //snd_pcm_start(handle);
+        
+        
         while (1) {
                 state = snd_pcm_state(handle);
                 if (state == SND_PCM_STATE_XRUN) {
                         err = xrun_recovery(handle, -EPIPE);
                         if (err < 0) {
                                 printf("XRUN recovery failed: %s\n", snd_strerror(err));
-                                exit(EXIT_FAILURE);
+                                return;//exit(EXIT_FAILURE);
                         }
                         first = 1;
                 } else if (state == SND_PCM_STATE_SUSPENDED) {
                         err = xrun_recovery(handle, -ESTRPIPE);
                         if (err < 0) {
                                 printf("SUSPEND recovery failed: %s\n", snd_strerror(err));
-                                exit(EXIT_FAILURE);
+                                return;//exit(EXIT_FAILURE);
                         }
                 }
                 avail = snd_pcm_avail_update(handle);
@@ -66,7 +179,7 @@ static void async_direct_callback(snd_async_handler_t *ahandler)
                         err = xrun_recovery(handle, avail);
                         if (err < 0) {
                                 printf("avail update failed: %s\n", snd_strerror(err));
-                                exit(EXIT_FAILURE);
+                                return;//exit(EXIT_FAILURE);
                         }
                         first = 1;
                         continue;
@@ -77,7 +190,7 @@ static void async_direct_callback(snd_async_handler_t *ahandler)
                                 err = snd_pcm_start(handle);
                                 if (err < 0) {
                                         printf("Start error: %s\n", snd_strerror(err));
-                                        exit(EXIT_FAILURE);
+                                        return;//exit(EXIT_FAILURE);
                                 }
                         } else {
                                 break;
@@ -91,28 +204,58 @@ static void async_direct_callback(snd_async_handler_t *ahandler)
                         if (err < 0) {
                                 if ((err = xrun_recovery(handle, err)) < 0) {
                                         printf("MMAP begin avail error: %s\n", snd_strerror(err));
-                                        exit(EXIT_FAILURE);
+                                        return;//exit(EXIT_FAILURE);
                                 }
                                 first = 1;
                         }
-                        generate_sine(my_areas, offset, frames, &data->phase);
+                        
+                        
+                        //generate_sine(my_areas, offset, frames, &data->phase);
+                        const snd_pcm_channel_area_t *areas = my_areas; 
+                        //snd_pcm_uframes_t offset,
+                        int count = frames;
+                        unsigned char *samples[2];
+                        int steps[2];
+                        
+                        //!! todo доставить в этот коблюк индекс звуковой карты и исходя из нее выбрать кол-во байт(2,3,4)!!
+                        int bps = 16 / 8;  // bytes per sample // 16 is virtualbox TEMP VM value change it to REAL!!
+                        int res;//current sample
+                        
+                        samples[0] = (((unsigned char *)areas[0].addr) + (areas[0].first / 8));
+                        samples[1] = (((unsigned char *)areas[1].addr) + (areas[1].first / 8));
+                        steps[0] = areas[0].step / 8;
+                        samples[0] += offset * steps[0];
+                        steps[1] = areas[1].step / 8;
+                        samples[1] += offset * steps[1];
+                        while (count-- > 0)
+                        {
+                            res += 500000000;
+                            for (int i = 0; i < bps; i++)
+                            {
+                                *(samples[0] + i) = (res >>  i * 8) & 0xff;
+                                *(samples[1] + i) = (res >>  i * 8) & 0xff;
+                            }
+                            samples[0] += steps[0];
+                            samples[1] += steps[1];
+                        }
+                        
                         commitres = snd_pcm_mmap_commit(handle, offset, frames);
                         if (commitres < 0 || (snd_pcm_uframes_t)commitres != frames) {
                                 if ((err = xrun_recovery(handle, commitres >= 0 ? -EPIPE : commitres)) < 0) {
                                         printf("MMAP commit error: %s\n", snd_strerror(err));
-                                        exit(EXIT_FAILURE);
+                                        return;//exit(EXIT_FAILURE);
                                 }
                                 first = 1;
                         }
                         size -= frames;
                 }
         }
-*/
+
 }
 
-void ALSA_RUN (GtkButton *button, gpointer data)
+void ALSA_RUN (GtkButton *button, gpointer data_i)
 {
-    int i = (int)data;
+    int i = (int)data_i;
 
     if(SoundCards[i].Online) return; // Already online
     
@@ -133,9 +276,9 @@ void ALSA_RUN (GtkButton *button, gpointer data)
     snd_pcm_uframes_t size;
     int err, dir;
     unsigned int buffer_time = 500000; // ring buffer length in us
-    unsigned int period_time = 100000; // period time in us
+    unsigned int period_time = 5333; // period time in us
     snd_pcm_sframes_t buffer_size;
-    snd_pcm_sframes_t period_size;
+    //snd_pcm_sframes_t period_size; // --> to global
     
     // choose all parameters 
     err = snd_pcm_hw_params_any(SoundCards[i].handle, hwparams);
@@ -150,23 +293,31 @@ void ALSA_RUN (GtkButton *button, gpointer data)
             CLOS();
     }
     // set the interleaved read/write format
-    err = snd_pcm_hw_params_set_access(SoundCards[i].handle, hwparams,  SND_PCM_ACCESS_MMAP_INTERLEAVED);
+    err = snd_pcm_hw_params_set_access(SoundCards[i].handle, hwparams, SND_PCM_ACCESS_MMAP_INTERLEAVED);
     if (err < 0) {
             printf("Access type not available for playback: %s\n", snd_strerror(err));
             CLOS();
     }
-    // set the sample format
-    err = snd_pcm_hw_params_set_format(SoundCards[i].handle, hwparams, SND_PCM_FORMAT_S32_LE); // SND_PCM_FORMAT_S32_LE because motwt has ASIOSTInt32LSB as default
+    // set the sample format : SND_PCM_FORMAT_S32_LE, SND_PCM_FORMAT_S24_3LE, SND_PCM_FORMAT_S16
+    snd_pcm_format_t format;// = SND_PCM_FORMAT_S32_LE;
+    format = SND_PCM_FORMAT_S32_LE; err = snd_pcm_hw_params_set_format(SoundCards[i].handle, hwparams, format);
+    if(err < 0)
+    format = SND_PCM_FORMAT_S24_3LE; err = snd_pcm_hw_params_set_format(SoundCards[i].handle, hwparams, format);
+    if(err < 0)
+    format = SND_PCM_FORMAT_S16; err = snd_pcm_hw_params_set_format(SoundCards[i].handle, hwparams, format);
+    
+    
+    //err = snd_pcm_hw_params_set_format(SoundCards[i].handle, hwparams, SND_PCM_FORMAT_S32_LE); // SND_PCM_FORMAT_S32_LE because motwt has ASIOSTInt32LSB as default
     if (err < 0) {                                                                             // but SND_PCM_FORMAT_FLOAT_LE is default VST format
             printf("Sample format not available for playback: %s\n", snd_strerror(err));
             
-            printf("Supported formats are\n");
+            printf("Supported formats by hardware are:\n");
             
             #define CHECK_FORMAT(a)\
             {\
                 if(snd_pcm_hw_params_set_format(SoundCards[i].handle, hwparams, a) >= 0)\
                 {\
-                    printf("%s\n",#a);\
+                    printf("\t%s\n",#a);\
                     snd_pcm_close(SoundCards[i].handle);\
                     snd_pcm_open(&SoundCards[i].handle, (std::string(SoundCards[i].ID + "," + std::to_string(SoundCards[i].Device))).c_str(), SND_PCM_STREAM_PLAYBACK, 0);\
                     snd_pcm_hw_params_any(SoundCards[i].handle, hwparams);\
@@ -225,6 +376,9 @@ void ALSA_RUN (GtkButton *button, gpointer data)
             
             CLOS();
     }
+    printf("Using supported sample format %s - OK\n", snd_pcm_format_name(format));
+    SoundCards[i].SampleFormat = format;
+    
     // set the count of channels
     err = snd_pcm_hw_params_set_channels(SoundCards[i].handle, hwparams, 2);
     if (err < 0) {
@@ -238,34 +392,42 @@ void ALSA_RUN (GtkButton *button, gpointer data)
             printf("Rate %iHz not available for playback: %s\n", 44100, snd_strerror(err));
             CLOS();
     }
-    if (rrate != 44100) {
-            printf("Rate doesn't match (requested %iHz, get %iHz)\n", 44100, err);
+    if ((rrate != 44100) && (rrate != 48000)) {
+            printf("Rate doesn't match (requested %iHz, get %iHz)\n", 44100, rrate);
             CLOS();
     }
+    printf("Using supported sample rate %i - OK\n", rrate);
+    SoundCards[i].SampleRate = rrate;
+    
+    
     // set the buffer time
     err = snd_pcm_hw_params_set_buffer_time_near(SoundCards[i].handle, hwparams, &buffer_time, &dir);
     if (err < 0) {
             printf("Unable to set buffer time %i for playback: %s\n", buffer_time, snd_strerror(err));
             CLOS();
     }
+    
     err = snd_pcm_hw_params_get_buffer_size(hwparams, &size);
     if (err < 0) {
             printf("Unable to get buffer size for playback: %s\n", snd_strerror(err));
             CLOS();
     }
     buffer_size = size;
+    
     // set the period time
     err = snd_pcm_hw_params_set_period_time_near(SoundCards[i].handle, hwparams, &period_time, &dir);
     if (err < 0) {
             printf("Unable to set period time %i for playback: %s\n", period_time, snd_strerror(err));
             CLOS();
     }
+    
     err = snd_pcm_hw_params_get_period_size(hwparams, &size, &dir);
     if (err < 0) {
             printf("Unable to get period size for playback: %s\n", snd_strerror(err));
             CLOS();
     }
     period_size = size;
+    
     // write the parameters to device
     err = snd_pcm_hw_params(SoundCards[i].handle, hwparams);
     if (err < 0) {
@@ -319,16 +481,16 @@ void ALSA_RUN (GtkButton *button, gpointer data)
     struct async_private_data data;
     snd_async_handler_t *ahandler;
     const snd_pcm_channel_area_t *my_areas;
-    snd_pcm_uframes_t offset, frames, size;
+    snd_pcm_uframes_t offset, frames;//, size;
     snd_pcm_sframes_t commitres;
-    int err, count;
+    int count;
     data.samples = NULL;    /* we do not require the global sample area for direct write */
     data.areas = NULL;      /* we do not require the global areas for direct write */
     data.phase = 0;
     err = snd_async_add_pcm_handler(&ahandler, SoundCards[i].handle, async_direct_callback, &data);
     if (err < 0) {
             printf("Unable to register async handler\n");
-            exit(EXIT_FAILURE);
+            CLOS();//exit(EXIT_FAILURE);
     }
     for (count = 0; count < 2; count++) {
             size = period_size;
@@ -342,8 +504,8 @@ void ALSA_RUN (GtkButton *button, gpointer data)
                                     CLOS();
                             //}
                     }
-                    generate_sine(my_areas, offset, frames, &data.phase);
-                    commitres = snd_pcm_mmap_commit(handle, offset, frames);
+                    //generate_sine(my_areas, offset, frames, &data.phase);
+                    commitres = snd_pcm_mmap_commit(SoundCards[i].handle, offset, frames);
                     if (commitres < 0 || (snd_pcm_uframes_t)commitres != frames) {
                             //if ((err = xrun_recovery(SoundCards[i].handle, commitres >= 0 ? -EPIPE : commitres)) < 0) {
                                     printf("MMAP commit error: %s\n", snd_strerror(err));
@@ -430,7 +592,9 @@ int alsaexchange_main()
     gtk_window_set_title(GTK_WINDOW(alsaexchange_window), "ALSA Devices");
     gtk_container_set_border_width (GTK_CONTAINER(alsaexchange_window), 50);
     g_signal_connect(G_OBJECT(alsaexchange_window), "destroy", G_CALLBACK(gtk_main_quit), NULL);
-
+    //static void _quit_cb (GtkWidget *button, gpointer data) { (void)button; (void)data; gtk_main_quit(); return; }
+    //g_signal_connect(G_OBJECT(alsaexchange_window), "destroy", G_CALLBACK(_quit_cb), NULL);
+    
     GtkWidget *grid = gtk_grid_new();
     gtk_container_add(GTK_CONTAINER(alsaexchange_window), grid);
 
@@ -450,6 +614,17 @@ int alsaexchange_main()
         SoundCards[i].StatusLabel = (GtkLabel *)gtk_label_new("status");
         gtk_grid_attach(GTK_GRID(grid), (GtkWidget *)SoundCards[i].StatusLabel, 3, i, 1, 1);
     }
+    
+    DebugLabel1 = (GtkLabel *)gtk_label_new("debug string");
+    gtk_grid_attach(GTK_GRID(grid), (GtkWidget *)DebugLabel1, 0, SoundCards.size(), 4, 1);
+    DebugLabel4 = (GtkLabel *)gtk_label_new("debug string");
+    gtk_grid_attach(GTK_GRID(grid), (GtkWidget *)DebugLabel4, 0, SoundCards.size() + 1, 4, 1);
+    DebugLabel10 = (GtkLabel *)gtk_label_new("debug string");
+    gtk_grid_attach(GTK_GRID(grid), (GtkWidget *)DebugLabel10, 0, SoundCards.size() + 2, 4, 1);
+    g_timeout_add_seconds(1, Timer1Sec, NULL);
+    g_timeout_add_seconds(4, Timer4Sec, NULL);
+    g_timeout_add_seconds(10, Timer10Sec, NULL);
+    
     
     update_ui();
     
