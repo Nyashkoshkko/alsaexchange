@@ -1,9 +1,15 @@
-#include <gtk/gtk.h>    // GTK3
 #include <asoundlib.h>  // ALSA
 #include <string>       // std::string
 #include <vector>       // std::vector
 
-GtkWidget * alsaexchange_window;
+
+//#define USING_GTK3
+//#define DEBUG_LABEL
+
+
+#ifdef USING_GTK3
+#include <gtk/gtk.h>    // GTK3
+#endif // USING_GTK3
 
 struct SALSACardRecord
 {
@@ -13,111 +19,26 @@ struct SALSACardRecord
     bool Online; // 0 - offline, 1 - online
     snd_pcm_format_t SampleFormat;
     int SampleRate;
+    int SampleCount;
     
+    #ifdef USING_GTK3
     GtkLabel * StatusLabel;
+    #endif // USING_GTK3
+    
     snd_pcm_t * handle;
 };
 std::vector<struct SALSACardRecord> SoundCards;
 
 // this lib(libalsaexchange.so) call this function for fill sound data from WINAPI part of this application
 int (*FillOutputBuffers)(int * LeftOutput, int * RightOutput, int SamplesCount);
-
-//Debug datas
-GtkLabel * DebugLabel1, * DebugLabel4, * DebugLabel10;
-int CallsCounter = 0, last_counter1 = 0, last_counter4 = 0, last_counter10 = 0;
-static gboolean Timer1Sec(gpointer data)
-{
-    char str[200];
-    
-    //static int last_counter = 0;
-    
-    int rrate = 1;
-    for(SALSACardRecord Cur : SoundCards)
-    {
-        if(Cur.Online)
-        {
-            rrate = Cur.SampleRate;
-        }
-    }
-    int last_sec_calls = CallsCounter - last_counter1;
-    
-    snprintf(str, sizeof(str) - 1, "CALLS = %i, last sec calls = %i, samples = %i", CallsCounter, last_sec_calls, rrate/((last_sec_calls == 0) ? (rrate*10) : (last_sec_calls)));
-    
-    last_counter1 = CallsCounter;
-    
-    gtk_label_set_text(DebugLabel1, str);
-    return true;
-}
-static gboolean Timer4Sec(gpointer data)
-{
-    char str[200];
-    
-    //static int last_counter = 0;
-    
-    int rrate = 1;
-    for(SALSACardRecord Cur : SoundCards)
-    {
-        if(Cur.Online)
-        {
-            rrate = Cur.SampleRate;
-        }
-    }
-    int last_sec_calls = CallsCounter - last_counter4;
-    
-    snprintf(str, sizeof(str) - 1, "CALLS = %i, last sec calls = %i, samples = %i", CallsCounter, last_sec_calls/4, (rrate*4)/((last_sec_calls == 0) ? (rrate*10) : (last_sec_calls)));
-    
-    last_counter4 = CallsCounter;
-    
-    gtk_label_set_text(DebugLabel4, str);
-    return true;
-}
-static gboolean Timer10Sec(gpointer data)
-{
-    char str[200];
-    
-    //static int last_counter = 0;
-    
-    int rrate = 1;
-    for(SALSACardRecord Cur : SoundCards)
-    {
-        if(Cur.Online)
-        {
-            rrate = Cur.SampleRate;
-        }
-    }
-    int last_sec_calls = CallsCounter - last_counter10;
-    
-    snprintf(str, sizeof(str) - 1, "CALLS = %i, last sec calls = %i, samples = %i", CallsCounter, last_sec_calls/10, (rrate*10)/((last_sec_calls == 0) ? (rrate*10) : (last_sec_calls)));
-    
-    last_counter10 = CallsCounter;
-    
-    gtk_label_set_text(DebugLabel10, str);
-    return true;
-}
-
-
-void update_ui()
-{
-    for(SALSACardRecord Cur : SoundCards)
-    {
-        if(Cur.Online)
-        {
-            gtk_label_set_markup (Cur.StatusLabel, std::string("<span foreground=\"green\" weight = \"bold\">  ONLINE</span>  (" + std::to_string(Cur.SampleRate) + ", " + std::string(snd_pcm_format_name(Cur.SampleFormat)) + ")").c_str());
-        }
-        else 
-        {
-            gtk_label_set_text(Cur.StatusLabel, "  OFFLINE");
-        }
-    }
-}
+int LeftOutput[512], RightOutput[512]; // temp; then call filling 
 
 
 
-snd_pcm_sframes_t period_size;
-static int xrun_recovery(snd_pcm_t *handle, int err)
+int xrun_recovery(snd_pcm_t *handle, int err)
 {
         //if (verbose)
-                printf("stream recovery\n");
+                printf("stream recovery(err=%i)\n",err);
         if (err == -EPIPE) {    /* under-run */
                 err = snd_pcm_prepare(handle);
                 if (err < 0)
@@ -135,29 +56,21 @@ static int xrun_recovery(snd_pcm_t *handle, int err)
         }
         return err;
 }
-struct async_private_data {
-        signed short *samples;
-        snd_pcm_channel_area_t *areas;
-        double phase;
-};
-static void async_direct_callback(snd_async_handler_t *ahandler)
+void async_direct_callback(snd_async_handler_t *ahandler)
 {
         snd_pcm_t *handle = (snd_pcm_t *)snd_async_handler_get_pcm(ahandler);
-        struct async_private_data *data = (struct async_private_data *)snd_async_handler_get_callback_private(ahandler);
         const snd_pcm_channel_area_t *my_areas;
         snd_pcm_uframes_t offset, frames, size;
         snd_pcm_sframes_t avail, commitres;
         snd_pcm_state_t state;
         int first = 0, err;
         
-        //printf("EBALO RAZOBIYU!!11\n");
-        CallsCounter++;
+        struct SALSACardRecord * Cur = (struct SALSACardRecord *)snd_async_handler_get_callback_private(ahandler);
         
-        //snd_pcm_mmap_begin(handle, &my_areas, &offset, &frames);
-        //snd_pcm_mmap_commit(handle, offset, frames);
-        //snd_pcm_start(handle);
-        
-        
+        #ifdef DEBUG_LABEL
+        CallsCounter++; // debug
+        #endif
+
         while (1) {
                 state = snd_pcm_state(handle);
                 if (state == SND_PCM_STATE_XRUN) {
@@ -184,7 +97,7 @@ static void async_direct_callback(snd_async_handler_t *ahandler)
                         first = 1;
                         continue;
                 }
-                if (avail < period_size) {
+                if (avail < Cur->SampleCount) {
                         if (first) {
                                 first = 0;
                                 err = snd_pcm_start(handle);
@@ -197,7 +110,10 @@ static void async_direct_callback(snd_async_handler_t *ahandler)
                         }
                         continue;
                 }
-                size = period_size;
+                size = Cur->SampleCount;
+                
+                FillOutputBuffers(LeftOutput, RightOutput, Cur->SampleCount);//потом добавить параметр - кол-во байт(4,3,2), чтобы winapi-часть приложения заполняла сразу буфер в драйвере (zero-copy)
+                
                 while (size > 0) {
                         frames = size;
                         err = snd_pcm_mmap_begin(handle, &my_areas, &offset, &frames);
@@ -218,8 +134,16 @@ static void async_direct_callback(snd_async_handler_t *ahandler)
                         int steps[2];
                         
                         //!! todo доставить в этот коблюк индекс звуковой карты и исходя из нее выбрать кол-во байт(2,3,4)!!
-                        int bps = 16 / 8;  // bytes per sample // 16 is virtualbox TEMP VM value change it to REAL!!
-                        int res;//current sample
+                        int bps = 16 / 8;  // bytes per sample // default SND_PCM_FORMAT_S16
+                        
+                        switch(Cur->SampleFormat)
+                        {//SND_PCM_FORMAT_S32_LE, SND_PCM_FORMAT_S24_3LE, SND_PCM_FORMAT_S16
+                            case SND_PCM_FORMAT_S32_LE: bps = 4; break;
+                            case SND_PCM_FORMAT_S24_3LE: bps = 3; break;
+                        }
+                        int delta = 4 - bps;
+                        
+                        //int res[2] = {0, 0};//current samples
                         
                         samples[0] = (((unsigned char *)areas[0].addr) + (areas[0].first / 8));
                         samples[1] = (((unsigned char *)areas[1].addr) + (areas[1].first / 8));
@@ -227,16 +151,23 @@ static void async_direct_callback(snd_async_handler_t *ahandler)
                         samples[0] += offset * steps[0];
                         steps[1] = areas[1].step / 8;
                         samples[1] += offset * steps[1];
+                        int CurSample = 0;
                         while (count-- > 0)
                         {
-                            res += 500000000;
+                            
+                            //res[0] += 500000000; res[1] += 500000000;  // there's no sound if commented
+                            //res[0] = ;
+                            //res[1] = ;
+                            
                             for (int i = 0; i < bps; i++)
                             {
-                                *(samples[0] + i) = (res >>  i * 8) & 0xff;
-                                *(samples[1] + i) = (res >>  i * 8) & 0xff;
+                                *(samples[0] + i) = (LeftOutput[CurSample] >>  (i + delta) * 8) & 0xff;
+                                *(samples[1] + i) = (RightOutput[CurSample] >>  (i + delta) * 8) & 0xff;
                             }
                             samples[0] += steps[0];
                             samples[1] += steps[1];
+                            
+                            CurSample++;
                         }
                         
                         commitres = snd_pcm_mmap_commit(handle, offset, frames);
@@ -253,10 +184,8 @@ static void async_direct_callback(snd_async_handler_t *ahandler)
 
 }
 
-void ALSA_RUN (GtkButton *button, gpointer data_i)
+void ALSA_RUN_real(int i, int Freq, int SamplesCount)
 {
-    int i = (int)data_i;
-
     if(SoundCards[i].Online) return; // Already online
     
     snd_pcm_hw_params_t * hwparams;
@@ -273,12 +202,7 @@ void ALSA_RUN (GtkButton *button, gpointer data_i)
     //HWPARAMS
     
     unsigned int rrate;
-    snd_pcm_uframes_t size;
     int err, dir;
-    unsigned int buffer_time = 500000; // ring buffer length in us
-    unsigned int period_time = 5333; // period time in us
-    snd_pcm_sframes_t buffer_size;
-    //snd_pcm_sframes_t period_size; // --> to global
     
     // choose all parameters 
     err = snd_pcm_hw_params_any(SoundCards[i].handle, hwparams);
@@ -379,12 +303,20 @@ void ALSA_RUN (GtkButton *button, gpointer data_i)
     printf("Using supported sample format %s - OK\n", snd_pcm_format_name(format));
     SoundCards[i].SampleFormat = format;
     
+    unsigned int chns; snd_pcm_hw_params_get_channels(hwparams, &chns); //printf("chns=%i\n",chns);
+    
     // set the count of channels
     err = snd_pcm_hw_params_set_channels(SoundCards[i].handle, hwparams, 2);
-    if (err < 0) {
+    if ((err < 0) && (chns == 0)) {
+        
+        //unsigned int chns; snd_pcm_hw_params_get_channels(hwparams, &chns); printf("chns=%i\n",chns);
+        
             printf("Channels count (%i) not available for playbacks: %s\n", 2, snd_strerror(err));
             CLOS();
     }
+    snd_pcm_hw_params_get_channels(hwparams, &chns);
+    printf("Using 2 from %i output channels - OK\n", chns);
+    
     // set the stream rate
     rrate = 44100;
     err = snd_pcm_hw_params_set_rate_near(SoundCards[i].handle, hwparams, &rrate, 0);
@@ -401,32 +333,33 @@ void ALSA_RUN (GtkButton *button, gpointer data_i)
     
     
     // set the buffer time
-    err = snd_pcm_hw_params_set_buffer_time_near(SoundCards[i].handle, hwparams, &buffer_time, &dir);
+    snd_pcm_uframes_t buffer_size = SamplesCount * 2; // buffer_size must be period_size * 2
+    err = snd_pcm_hw_params_set_buffer_size(SoundCards[i].handle, hwparams, buffer_size);
     if (err < 0) {
-            printf("Unable to set buffer time %i for playback: %s\n", buffer_time, snd_strerror(err));
+            printf("Unable to set buffer size %i for playback: %s\n", (int)buffer_size, snd_strerror(err));
             CLOS();
     }
     
-    err = snd_pcm_hw_params_get_buffer_size(hwparams, &size);
+    err = snd_pcm_hw_params_get_buffer_size(hwparams, &buffer_size);
     if (err < 0) {
             printf("Unable to get buffer size for playback: %s\n", snd_strerror(err));
             CLOS();
     }
-    buffer_size = size;
     
     // set the period time
-    err = snd_pcm_hw_params_set_period_time_near(SoundCards[i].handle, hwparams, &period_time, &dir);
+    snd_pcm_uframes_t period_size = SamplesCount; dir = 0;
+    err = snd_pcm_hw_params_set_period_size(SoundCards[i].handle, hwparams, period_size, dir); // LAST PARAMETER IS dir: Wanted exact value is <,=,> val following dir (-1,0,1)
     if (err < 0) {
-            printf("Unable to set period time %i for playback: %s\n", period_time, snd_strerror(err));
+            printf("Unable to set period size %i for playback: %s\n", (int)period_size, snd_strerror(err));
             CLOS();
     }
     
-    err = snd_pcm_hw_params_get_period_size(hwparams, &size, &dir);
+    err = snd_pcm_hw_params_get_period_size(hwparams, &period_size, &dir);
     if (err < 0) {
             printf("Unable to get period size for playback: %s\n", snd_strerror(err));
             CLOS();
     }
-    period_size = size;
+    SoundCards[i].SampleCount = period_size;
     
     // write the parameters to device
     err = snd_pcm_hw_params(SoundCards[i].handle, hwparams);
@@ -437,8 +370,6 @@ void ALSA_RUN (GtkButton *button, gpointer data_i)
 
     //SWPARAMS
     
-    int period_event = 0; // produce poll event after each period
-    
     // get the current swparams
     err = snd_pcm_sw_params_current(SoundCards[i].handle, swparams);
     if (err < 0) {
@@ -447,25 +378,18 @@ void ALSA_RUN (GtkButton *button, gpointer data_i)
     }
     // start the transfer when the buffer is almost full:
     // (buffer_size / avail_min) * avail_min
-    err = snd_pcm_sw_params_set_start_threshold(SoundCards[i].handle, swparams, (buffer_size / period_size) * period_size);
+    //err = snd_pcm_sw_params_set_start_threshold(SoundCards[i].handle, swparams, (buffer_size / period_size) * period_size); // сейчас эта хрень = 2 * сэмплес, может сделать 1.* сэмплес (PCM is automatically started when playback frames available to PCM are >= threshold or when requested capture frames are >= threshold)
+    err = snd_pcm_sw_params_set_start_threshold(SoundCards[i].handle, swparams, period_size);
     if (err < 0) {
             printf("Unable to set start threshold mode for playback: %s\n", snd_strerror(err));
             CLOS();
     }
     // allow the transfer when at least period_size samples can be processed
     // or disable this mechanism when period event is enabled (aka interrupt like style processing)
-    err = snd_pcm_sw_params_set_avail_min(SoundCards[i].handle, swparams, period_event ? buffer_size : period_size);
+    err = snd_pcm_sw_params_set_avail_min(SoundCards[i].handle, swparams, period_size);
     if (err < 0) {
             printf("Unable to set avail min for playback: %s\n", snd_strerror(err));
             CLOS();
-    }
-    // enable period events when requested
-    if (period_event) {
-            err = snd_pcm_sw_params_set_period_event(SoundCards[i].handle, swparams, 1);
-            if (err < 0) {
-                    printf("Unable to set period event: %s\n", snd_strerror(err));
-                    CLOS();
-            }
     }
     // write the parameters to the playback device
     err = snd_pcm_sw_params(SoundCards[i].handle, swparams);
@@ -478,16 +402,17 @@ void ALSA_RUN (GtkButton *button, gpointer data_i)
     //0
     
     //INIT ASYNC CALLBACKS
-    struct async_private_data data;
+//    struct async_private_data data;
     snd_async_handler_t *ahandler;
     const snd_pcm_channel_area_t *my_areas;
-    snd_pcm_uframes_t offset, frames;//, size;
+    snd_pcm_uframes_t offset, frames, size;
     snd_pcm_sframes_t commitres;
     int count;
-    data.samples = NULL;    /* we do not require the global sample area for direct write */
-    data.areas = NULL;      /* we do not require the global areas for direct write */
-    data.phase = 0;
-    err = snd_async_add_pcm_handler(&ahandler, SoundCards[i].handle, async_direct_callback, &data);
+    //data.samples = NULL;    /* we do not require the global sample area for direct write */
+    //data.areas = NULL;      /* we do not require the global areas for direct write */
+    //data.phase = 0;
+    //data.SoundCardIndex = i;
+    err = snd_async_add_pcm_handler(&ahandler, SoundCards[i].handle, async_direct_callback, &SoundCards[i]);
     if (err < 0) {
             printf("Unable to register async handler\n");
             CLOS();//exit(EXIT_FAILURE);
@@ -525,35 +450,24 @@ void ALSA_RUN (GtkButton *button, gpointer data_i)
     
         
     SoundCards[i].Online = true;
-    update_ui();
-    
-    FillOutputBuffers(NULL,NULL,0);//DELETE THIS DEBUG CALL STRING
 }
 
-void ALSA_STOP (GtkButton *button, gpointer data)
-{
-    int i = (int)data;
-    //printf("STOP CALLED WITH %s device %i\n", SoundCards[i].ID.c_str(), SoundCards[i].Device);
 
+void ALSA_STOP_real(int i)
+{
     if(SoundCards[i].Online)
     {
         snd_pcm_close(SoundCards[i].handle);
         SoundCards[i].Online = false;
-        
-        update_ui();
     }
 }
 
-int alsaexchange_main()
+int alsaexchange_main_init()
 {
     static int fRun = 1;
     
     if(fRun == 1)
     {
-        //GTK3 init
-        int argc = 0; char **argv = NULL;
-        gtk_init(&argc, &argv);
-        
         //ALSA find sound cards and printf it
         int cardnum = -1;
         snd_ctl_t * handle;
@@ -583,8 +497,83 @@ int alsaexchange_main()
             }
             snd_ctl_close(handle);
         }
+    }
+
+    return 0;
+}
+
+#ifdef USING_GTK3
+
+GtkWidget * alsaexchange_window;
+
+#ifdef DEBUG_LABEL
+//Debug datas
+GtkLabel * DebugLabel1;
+int CallsCounter = 0, last_counter1 = 0;
+gboolean Timer1Sec(gpointer data)
+{
+    char str[200];
+    
+    int rrate = 1;
+    for(SALSACardRecord Cur : SoundCards)
+    {
+        if(Cur.Online)
+        {
+            rrate = Cur.SampleRate;
+        }
+    }
+    int last_sec_calls = CallsCounter - last_counter1;
+    
+    snprintf(str, sizeof(str) - 1, "CALLS = %i, last sec calls = %i, samples = %i", CallsCounter, last_sec_calls, rrate/((last_sec_calls == 0) ? (rrate*10) : (last_sec_calls)));
+    
+    last_counter1 = CallsCounter;
+    
+    gtk_label_set_text(DebugLabel1, str);
+    return true;
+}
+#endif
+
+void update_ui()
+{
+    for(SALSACardRecord Cur : SoundCards)
+    {
+        if(Cur.Online)
+        {
+            gtk_label_set_markup (Cur.StatusLabel, std::string("<span foreground=\"green\" weight = \"bold\">  ONLINE</span>  (" + std::to_string(Cur.SampleRate) + ", " + std::string(snd_pcm_format_name(Cur.SampleFormat)) + ")").c_str());
+        }
+        else 
+        {
+            gtk_label_set_text(Cur.StatusLabel, "  OFFLINE");
+        }
+    }
+}
+
+void ALSA_RUN(GtkButton *button, gpointer data)
+{
+    ALSA_RUN_real((int)data, 44100, 256);
+    update_ui();
+}
+
+void ALSA_STOP(GtkButton *button, gpointer data)
+{
+    ALSA_STOP_real((int)data);
+    update_ui();
+}
+
+int alsaexchange_main_show()
+{
+    static int fRun = 1;
+    
+    if(fRun == 1)
+    {
+        //GTK3 init
+        int argc = 0; char **argv = NULL;
+        gtk_init(&argc, &argv);
+        // Timer 1 sec init
+        #ifdef DEBUG_LABEL
+        g_timeout_add_seconds(1, Timer1Sec, NULL);
+        #endif
         
-        //SoundCards.push_back({"AHUENNO NET ZVUKA", "ID:40", 40, true}); //Add Card for debug TESTOWA9 RFKATTAa11
         fRun = 0;
     }
     
@@ -615,30 +604,58 @@ int alsaexchange_main()
         gtk_grid_attach(GTK_GRID(grid), (GtkWidget *)SoundCards[i].StatusLabel, 3, i, 1, 1);
     }
     
+    // Debug label that fill stom 1 sec timer
+    #ifdef DEBUG_LABEL
     DebugLabel1 = (GtkLabel *)gtk_label_new("debug string");
     gtk_grid_attach(GTK_GRID(grid), (GtkWidget *)DebugLabel1, 0, SoundCards.size(), 4, 1);
-    DebugLabel4 = (GtkLabel *)gtk_label_new("debug string");
-    gtk_grid_attach(GTK_GRID(grid), (GtkWidget *)DebugLabel4, 0, SoundCards.size() + 1, 4, 1);
-    DebugLabel10 = (GtkLabel *)gtk_label_new("debug string");
-    gtk_grid_attach(GTK_GRID(grid), (GtkWidget *)DebugLabel10, 0, SoundCards.size() + 2, 4, 1);
-    g_timeout_add_seconds(1, Timer1Sec, NULL);
-    g_timeout_add_seconds(4, Timer4Sec, NULL);
-    g_timeout_add_seconds(10, Timer10Sec, NULL);
-    
+    #endif
     
     update_ui();
     
     gtk_widget_show_all(alsaexchange_window);
     gtk_main();
-
+    
     return 0;
 }
- 
+#else // USING_GTK3
+int alsaexchange_main_show(){ return 0; }
+#endif // USING_GTK3
+
 #include "alsaexchange.h"
-extern "C" int alsaexchange_init(int (*FillOutputBuffers_ptr)(int * LeftOutput, int * RightOutput, int SamplesCount)) 
+extern "C" int alsaexchange_init(int (*FillOutputBuffers_ptr)(int * LeftOutput, int * RightOutput, int SamplesCount), char *** AlsaNames, int * AlsaCount) 
 {
     FillOutputBuffers = FillOutputBuffers_ptr;
-    alsaexchange_main();
+    alsaexchange_main_init();
+    *AlsaNames = new char*[SoundCards.size()];
+    for(int i = 0; i < SoundCards.size(); i++)
+    {
+        (*AlsaNames)[i] = (char*)SoundCards[i].Name.c_str();
+    }
+    *AlsaCount = SoundCards.size();
+    return 0;
+}
+
+extern "C" int alsaexchange_show()
+{
+    alsaexchange_main_show();
+    return 0;
+}
+
+extern "C" int alsaexchange_alsa_run(int index, int Freq, int SamplesCount)
+{
+    if(index < SoundCards.size())
+    {
+        ALSA_RUN_real(index, Freq, SamplesCount);
+    }
+    return 0;
+}
+
+extern "C" int alsaexchange_alsa_stop(int index)
+{
+    if(index < SoundCards.size())
+    {
+        ALSA_STOP_real(index);
+    }
     return 0;
 }
 
