@@ -85,6 +85,8 @@ int free_dll()
 #define ID_BUTTON_SAMPLES_64 200
 #define ID_BUTTON_SAMPLES_128 201
 #define ID_BUTTON_SAMPLES_256 202
+#define ID_BUTTON_SAMPLES_512 203
+#define ID_BUTTON_SAMPLES_1024 204
 #define ID_TIMER1 3
 #define ID_ASIOLIST 4
 #define ID_LABEL3 8 // alsa sample count
@@ -117,6 +119,8 @@ HWND H_BTN_ASIO_CFG;
 HWND H_BTN_SAMPLES_64;
 HWND H_BTN_SAMPLES_128;
 HWND H_BTN_SAMPLES_256;
+HWND H_BTN_SAMPLES_512;
+HWND H_BTN_SAMPLES_1024;
 HWND H_TEXT_OUTPUT_VOLUME;
 HWND H_TEXT_OUTPUT_VOL_CNT;
 HWND H_TEXT_ASIOLIST;
@@ -293,6 +297,47 @@ VstIntPtr VSTCALLBACK HostCallback (AEffect* effect, VstInt32 opcode, VstInt32 i
 		case audioMasterVersion :
 			result = kVstVersion;
 			break;
+            
+        case audioMasterGetTime:
+        {
+            //printf("plugin call host with pleasure of opcode MasterGetTime\n");
+            break;
+        }
+            
+        case audioMasterIdle:
+        {
+            //printf("plugin call host with pleasure of opcode MasterIdle\n");
+            break;
+        }
+        
+        case audioMasterAutomate:
+        {
+            //printf("plugin send to the host some automation data\n");
+            break;
+        }
+        
+        case audioMasterCanDo:
+        {
+            printf("plugin ask: can host do '%s'? i answer NO\n", (char*)ptr);
+            break;
+        }
+            
+        case __audioMasterWantMidiDeprecated:
+        {
+            printf("PLUGIN WANT MIDI DATA!!! old wayi ;-p\n");
+            result = 1;
+            break;
+        }
+        
+        case audioMasterProcessEvents:
+        {
+            printf("plugin send midi data to host\n");
+            break;
+        }
+        default:
+        {
+            printf("plugin call host with opcode #%i\n", opcode);
+        }
 	}
 
 	return result;
@@ -400,6 +445,8 @@ int MyVST_Init()
 	//printf ("HOST> Resume effect...\n");
 	MyVSTEffect->dispatcher (MyVSTEffect, effMainsChanged, 0, 1, 0, 0);
 
+	//MyVSTEffect->dispatcher (MyVSTEffect, effStartProcess, 0, 0, 0, 0); //?? ardour nnt call it
+    
 	MyVST_WindowThread = CreateThread(NULL, 0, MyVST_StartWindow, NULL, 0, NULL);
 
 	return 0;
@@ -417,6 +464,8 @@ void MyVST_Close()
 	MyVST_active = 0;
 
 	TerminateThread(MyVST_WindowThread, 0);
+    
+    //MyVSTEffect->dispatcher (MyVSTEffect, effStopProcess, 0, 0, 0, 0); //?? ardour nnt call it
 
 	//printf ("HOST> Suspend effect...\n");
 	MyVSTEffect->dispatcher (MyVSTEffect, effMainsChanged, 0, 0, 0, 0);
@@ -441,6 +490,94 @@ void MyVST_Close()
 
 void MyVST_BufferUpdate()
 {
+    //printf("entering MyVST_BufferUpdate...\n");
+    
+    // ZASUNUT' MIDI DANNIE TUDA V PLAGIN - DOBAVIT PROVERKU NA UMEET LI PLAGN MidI - IBO FUNCTSYIYA in .dll IZ VIRTUAL
+    static VstEvents events;
+    //struct VstEvents
+    //{
+    //-------------------------------------------------------------------------------------------------------
+    //	VstInt32 numEvents;		///< number of Events in array
+    //	VstIntPtr reserved;		///< zero (Reserved for future use)
+    //	VstEvent* events[2];	///< event pointer array, variable size
+    //-------------------------------------------------------------------------------------------------------
+    //};
+    
+    // здесь в общем разово создать массив статиком и загнать в него заголовки эвентов, чтобы потом только 
+    // миди-данные по указателям менять и все, т.е. mididatas[0] = &midiData[0] 1-го эвента, mididatas[1] - 2го и т.д.
+    
+    events.numEvents = 1;
+    events.reserved = 0;
+    static VstMidiEvent event;
+    //struct VstMidiEvent
+//{
+//-------------------------------------------------------------------------------------------------------
+//	VstInt32 type;			///< #kVstMidiType
+//	VstInt32 byteSize;		///< sizeof (VstMidiEvent)
+//	VstInt32 deltaFrames;	///< sample frames related to the current block start sample position
+//	VstInt32 flags;			///< @see VstMidiEventFlags
+//	VstInt32 noteLength;	///< (in sample frames) of entire note, if available, else 0
+//	VstInt32 noteOffset;	///< offset (in sample frames) into note from note start if available, else 0
+//	char midiData[4];		///< 1 to 3 MIDI bytes; midiData[3] is reserved (zero)
+//	char detune;			///< -64 to +63 cents; for scales other than 'well-tempered' ('microtuning')
+//	char noteOffVelocity;	///< Note Off Velocity [0, 127]
+//	char reserved1;			///< zero (Reserved for future use)
+//	char reserved2;			///< zero (Reserved for future use)
+//-------------------------------------------------------------------------------------------------------
+//};
+    //FILL EVENT
+    event.type = kVstMidiType;
+    event.byteSize = 24;//sizeof(VstMidiEvent);
+    event.deltaFrames = 0;
+    event.flags = 0;//kVstMidiEventIsRealtime;
+    event.noteLength = 0;
+    event.noteOffset = 0;
+    event.midiData[0] = 0x90; // 0x90 - note on midi ch #0, 0x91 - note on ch#1 etc..; 0x80 - note off ch0, 0x81-off ch1..
+    event.midiData[1] = 60; // note - [0..127] // 60 = C3 - до посередине
+    event.midiData[2] = 100; // velocity - [0..127]
+    event.midiData[3] = 0; // unused
+    event.detune = 0;
+    event.noteOffVelocity = 0;
+    event.reserved1 = 0;
+    event.reserved2 = 0;
+    
+    static VstMidiEvent event2;
+    event2 = event;
+    event2.midiData[0] = 0x80;
+    event2.midiData[2] = 0;
+    
+   
+    
+    
+    
+    static int cnter = 0;
+
+
+    if(cnter == 0)
+    {
+        events.events[0]=(VstEvent*)&event;
+        MyVSTEffect->dispatcher (MyVSTEffect, effProcessEvents, 0, 0, &events, 0);
+        printf("Note On\n");
+    }
+    
+    if(cnter == (44100 / ALSADriverSampleCount))
+    {
+        events.events[0]=(VstEvent*)&event2;
+        MyVSTEffect->dispatcher (MyVSTEffect, effProcessEvents, 0, 0, &events, 0);
+        printf("Note Off\n");   
+    }
+    
+    // dispatcher is :  (AEffect* effect, VstInt32 opcode, VstInt32 index, VstIntPtr value, void* ptr, float opt)
+    // effProcessEvents is : [ptr]: #VstEvents*
+    
+    
+    cnter++;
+    if(cnter == ((44100 / ALSADriverSampleCount) * 2))
+    {
+        cnter = 0;
+    }
+    
+    
 	//printf ("HOST> Process Replacing...\n");
 	MyVSTEffect->processReplacing (MyVSTEffect, MyVST_Inputs, MyVST_Outputs, ALSADriverSampleCount);
 }
@@ -484,6 +621,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR IpCmdLine
     H_BTN_SAMPLES_64 = CreateWindow("static", "64", WS_VISIBLE | WS_CHILD | SS_NOTIFY | WS_TABSTOP | SS_CENTER | WS_BORDER, 130, 50, 40, 20, H_MAINWINDOW, (HMENU)ID_BUTTON_SAMPLES_64, hInstance, NULL);
     H_BTN_SAMPLES_128 = CreateWindow("static", "128", WS_VISIBLE | WS_CHILD | SS_NOTIFY | WS_TABSTOP | SS_CENTER | WS_BORDER, 130 + ((50 + 5) * 1), 50, 40, 20, H_MAINWINDOW, (HMENU)ID_BUTTON_SAMPLES_128, hInstance, NULL);
     H_BTN_SAMPLES_256 = CreateWindow("static", "256", WS_VISIBLE | WS_CHILD | SS_NOTIFY | WS_TABSTOP | SS_CENTER | WS_BORDER, 130 + ((50 + 5) * 2), 50, 40, 20, H_MAINWINDOW, (HMENU)ID_BUTTON_SAMPLES_256, hInstance, NULL);
+    H_BTN_SAMPLES_512 = CreateWindow("static", "512", WS_VISIBLE | WS_CHILD | SS_NOTIFY | WS_TABSTOP | SS_CENTER | WS_BORDER, 130 + ((50 + 5) * 3), 50, 40, 20, H_MAINWINDOW, (HMENU)ID_BUTTON_SAMPLES_512, hInstance, NULL);
+    H_BTN_SAMPLES_1024 = CreateWindow("static", "1024", WS_VISIBLE | WS_CHILD | SS_NOTIFY | WS_TABSTOP | SS_CENTER | WS_BORDER, 130 + ((50 + 5) * 4), 50, 40, 20, H_MAINWINDOW, (HMENU)ID_BUTTON_SAMPLES_512, hInstance, NULL);
 
 
 
@@ -546,7 +685,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR IpCmdLine
 
 	//add 17.12.2012 - new user interface
 	// создаем массив хэндлов для пробега интерфейса через один цикл
-	#define HWND_INTERFACE_CNT (16)
+	#define HWND_INTERFACE_CNT (18)
 	HWND H_ALL[HWND_INTERFACE_CNT];
 	i = 0;
 	H_ALL[i++] = H_MAINWINDOW;
@@ -565,6 +704,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR IpCmdLine
     H_ALL[i++] = H_BTN_SAMPLES_64;
     H_ALL[i++] = H_BTN_SAMPLES_128;
     H_ALL[i++] = H_BTN_SAMPLES_256;
+    H_ALL[i++] = H_BTN_SAMPLES_512;
+    H_ALL[i++] = H_BTN_SAMPLES_1024;
 	// создаем цвет окна - белый
 	HFONT fnt;
 
@@ -957,6 +1098,20 @@ LRESULT CALLBACK WndProc(HWND H_HWND, UINT Message, WPARAM wparam,LPARAM lparam)
                 {
                     alsaexchange_alsa_stop(ALSADriverCurrentIndex);
                     ALSADriverSampleCount = 256;
+                    alsaexchange_alsa_run(ALSADriverCurrentIndex, 44100, ALSADriverSampleCount);
+                }
+                
+                if(idCtrl == ID_BUTTON_SAMPLES_512)
+                {
+                    alsaexchange_alsa_stop(ALSADriverCurrentIndex);
+                    ALSADriverSampleCount = 512;
+                    alsaexchange_alsa_run(ALSADriverCurrentIndex, 44100, ALSADriverSampleCount);
+                }
+                
+                if(idCtrl == ID_BUTTON_SAMPLES_1024)
+                {
+                    alsaexchange_alsa_stop(ALSADriverCurrentIndex);
+                    ALSADriverSampleCount = 1024;
                     alsaexchange_alsa_run(ALSADriverCurrentIndex, 44100, ALSADriverSampleCount);
                 }
 			}

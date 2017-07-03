@@ -31,8 +31,11 @@ std::vector<struct SALSACardRecord> SoundCards;
 
 // this lib(libalsaexchange.so) call this function for fill sound data from WINAPI part of this application
 int (*FillOutputBuffers)(int * LeftOutput, int * RightOutput, int SamplesCount);
-int LeftOutput[512], RightOutput[512]; // temp; then call filling 
+int LeftOutput[1024], RightOutput[1024]; // temp; then call filling 
 
+#ifdef DEBUG_LABEL
+int CallsCounter = 0;
+#endif
 
 
 int xrun_recovery(snd_pcm_t *handle, int err)
@@ -361,6 +364,8 @@ void ALSA_RUN_real(int i, int Freq, int SamplesCount)
     }
     SoundCards[i].SampleCount = period_size;
     
+    printf("period_size = %i, buffer_size = %i\n", (int)period_size, (int)buffer_size);
+    
     // write the parameters to device
     err = snd_pcm_hw_params(SoundCards[i].handle, hwparams);
     if (err < 0) {
@@ -423,20 +428,20 @@ void ALSA_RUN_real(int i, int Freq, int SamplesCount)
                     frames = size;
                     err = snd_pcm_mmap_begin(SoundCards[i].handle, &my_areas, &offset, &frames);
                     if (err < 0) {
-                            //if ((err = xrun_recovery(SoundCards[i].handle, err)) < 0) {
+                            if ((err = xrun_recovery(SoundCards[i].handle, err)) < 0) {
                                     printf("MMAP begin avail error: %s\n", snd_strerror(err));
                                     //exit(EXIT_FAILURE);
                                     CLOS();
-                            //}
+                            }
                     }
                     //generate_sine(my_areas, offset, frames, &data.phase);
                     commitres = snd_pcm_mmap_commit(SoundCards[i].handle, offset, frames);
                     if (commitres < 0 || (snd_pcm_uframes_t)commitres != frames) {
-                            //if ((err = xrun_recovery(SoundCards[i].handle, commitres >= 0 ? -EPIPE : commitres)) < 0) {
+                            if ((err = xrun_recovery(SoundCards[i].handle, commitres >= 0 ? -EPIPE : commitres)) < 0) {
                                     printf("MMAP commit error: %s\n", snd_strerror(err));
                                     //exit(EXIT_FAILURE);
                                     CLOS();
-                            //}
+                            }
                     }
                     size -= frames;
             }
@@ -509,7 +514,7 @@ GtkWidget * alsaexchange_window;
 #ifdef DEBUG_LABEL
 //Debug datas
 GtkLabel * DebugLabel1;
-int CallsCounter = 0, last_counter1 = 0;
+int last_counter1 = 0;
 gboolean Timer1Sec(gpointer data)
 {
     char str[200];
