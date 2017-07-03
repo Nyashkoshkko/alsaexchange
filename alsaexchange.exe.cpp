@@ -13,15 +13,20 @@ using namespace std;
 
 HINSTANCE hLib;
 
-int (*alsaexchange_init)(int (*FillOutputBuffers_ptr)(int * LeftOutput, int * RightOutput, int SamplesCount), char *** AlsaNames, int * AlsaCount);
+int (*alsaexchange_init)(int (*FillOutputBuffers_ptr)(int * LeftOutput, int * RightOutput, int SamplesCount), char *** AlsaNames, int * AlsaCount, char *** MidiInNames, int * MidiInCount);
 int (*alsaexchange_show)();
 int (*alsaexchange_alsa_run)(int index, int Freq, int SamplesCount);
 int (*alsaexchange_alsa_stop)(int index);
 int (*alsaexchange_exit)();
+int (*alsaexchange_midiin_run)(int index);
+int (*alsaexchange_midiin_stop)(int index);
+int (*alsaexchange_midiin_getnewdata)(char * mididata, int BytesAssigned);
 
 int FillOutputBuffers(int * LeftOutput, int * RightOutput, int SamplesCount);// proto
 char ** AlsaNames;
 int AlsaCount = 0;
+char ** MidiInNames;
+int MidiInCount = 0;
 
 int run_func_drom_dll()
 {
@@ -35,11 +40,14 @@ int run_func_drom_dll()
             return -1;
         }
       
-        alsaexchange_init=( int (*) (int(*)(int*, int*, int), char***, int*))GetProcAddress((HMODULE)hLib, "alsaexchange_init");
+        alsaexchange_init=( int (*) (int(*)(int*, int*, int), char***, int*, char***, int*))GetProcAddress((HMODULE)hLib, "alsaexchange_init");
         alsaexchange_show = ( int (*)() )GetProcAddress((HMODULE)hLib, "alsaexchange_show");
         alsaexchange_alsa_run = ( int (*)(int, int, int) )GetProcAddress((HMODULE)hLib, "alsaexchange_alsa_run");
         alsaexchange_alsa_stop = ( int (*)(int) )GetProcAddress((HMODULE)hLib, "alsaexchange_alsa_stop");
         alsaexchange_exit = ( int (*)() )GetProcAddress((HMODULE)hLib, "alsaexchange_exit");
+        alsaexchange_midiin_run = ( int (*)(int) )GetProcAddress((HMODULE)hLib, "alsaexchange_midiin_run");
+        alsaexchange_midiin_stop = ( int (*)(int) )GetProcAddress((HMODULE)hLib, "alsaexchange_midiin_stop");
+        alsaexchange_midiin_getnewdata = ( int (*)(char *, int) )GetProcAddress((HMODULE)hLib, "alsaexchange_midiin_getnewdata");
     
         fRun = 0;
     }
@@ -48,6 +56,9 @@ int run_func_drom_dll()
     if(alsaexchange_alsa_run==NULL) {cout << "Unable to load function(s) alsaexchange_alsa_run" << endl;}
     if(alsaexchange_alsa_stop==NULL) {cout << "Unable to load function(s) alsaexchange_alsa_stop" << endl;}
     if(alsaexchange_exit==NULL) {cout << "Unable to load function(s) alsaexchange_exit" << endl;}
+    if(alsaexchange_midiin_run==NULL) {cout << "Unable to load function(s) alsaexchange_midiin_run" << endl;}
+    if(alsaexchange_midiin_stop==NULL) {cout << "Unable to load function(s) alsaexchange_midiin_stop" << endl;}
+    if(alsaexchange_midiin_getnewdata==NULL) {cout << "Unable to load function(s) alsaexchange_midiin_getnewdata" << endl;}
       
     if(alsaexchange_init==NULL) 
     {
@@ -55,7 +66,7 @@ int run_func_drom_dll()
     }
     else
     {
-        int res = alsaexchange_init((int (*)(int*, int*, int))&FillOutputBuffers, &AlsaNames, &AlsaCount);
+        int res = alsaexchange_init((int (*)(int*, int*, int))&FillOutputBuffers, &AlsaNames, &AlsaCount, &MidiInNames, &MidiInCount);
     }
 
     return 0;
@@ -89,6 +100,7 @@ int free_dll()
 #define ID_BUTTON_SAMPLES_1024 204
 #define ID_TIMER1 3
 #define ID_ASIOLIST 4
+#define ID_MIDILIST 205
 #define ID_LABEL3 8 // alsa sample count
 
 
@@ -111,6 +123,7 @@ LRESULT CALLBACK WndProc(HWND, UINT, WPARAM,LPARAM);
 
 HWND H_MAINWINDOW; // главное окно приложени€
 HWND H_ASIOLIST; // раскрывающийс€ список обнаруженных ASIO драйверов
+HWND H_MIDILIST;
 HWND H_CB_SAVEWAVE; // чекбокс сохранени€ всего выходного вудиопотока в файл(запись(сами данные + обновить размер) раз в п€ть секунд + записать хвост в конце), по изменению галочки создать файл с заголовком
 
 // add 17.12.2012
@@ -125,6 +138,9 @@ HWND H_TEXT_OUTPUT_VOLUME;
 HWND H_TEXT_OUTPUT_VOL_CNT;
 HWND H_TEXT_ASIOLIST;
 #define ID_TEXT_ASIOLIST 92
+
+HWND H_TEXT_MIDILIST;
+#define ID_TEXT_MIDILIST 206
 
 HWND H_TEXT_VSTPLUGIN;
 #define ID_TEXT_VSTPLUGIN 96
@@ -336,7 +352,7 @@ VstIntPtr VSTCALLBACK HostCallback (AEffect* effect, VstInt32 opcode, VstInt32 i
         }
         default:
         {
-            printf("plugin call host with opcode #%i\n", opcode);
+            //printf("plugin call host with opcode #%i\n", opcode);
         }
 	}
 
@@ -493,22 +509,53 @@ void MyVST_BufferUpdate()
     //printf("entering MyVST_BufferUpdate...\n");
     
     // ZASUNUT' MIDI DANNIE TUDA V PLAGIN - DOBAVIT PROVERKU NA UMEET LI PLAGN MidI - IBO FUNCTSYIYA in .dll IZ VIRTUAL
-    static VstEvents events;
-    //struct VstEvents
-    //{
-    //-------------------------------------------------------------------------------------------------------
-    //	VstInt32 numEvents;		///< number of Events in array
-    //	VstIntPtr reserved;		///< zero (Reserved for future use)
-    //	VstEvent* events[2];	///< event pointer array, variable size
-    //-------------------------------------------------------------------------------------------------------
-    //};
+    
+    struct VstEvents_BIG
+    {
+    	VstInt32 numEvents;		///< number of Events in array
+    	VstIntPtr reserved;		///< zero (Reserved for future use)
+    	VstEvent* events[100];	///< event pointer array, variable size
+    };
+    static VstEvents_BIG events;
+    static VstMidiEvent event[100];
+    static char midi_data[100*3]; // OH YIE FUCKINBG H.A.R.D.C()De111111 IYEI111~~~ ALSAALSAALSAALSA
+    
+    static bool fRun = true;
+    if(fRun)
+    {
+        events.reserved = 0;
+        for(int i = 0; i < 100; i++)
+        {
+            events.events[i]=(VstEvent*)&event[i];
+            
+            event[i].type = kVstMidiType;
+            event[i].byteSize = 24;//sizeof(VstMidiEvent);
+            event[i].deltaFrames = 0;
+            event[i].flags = 0;//kVstMidiEventIsRealtime;
+            event[i].noteLength = 0;
+            event[i].noteOffset = 0;
+            event[i].midiData[3] = 0; // unused
+            event[i].detune = 0;
+            event[i].noteOffVelocity = 0;
+            event[i].reserved1 = 0;
+            event[i].reserved2 = 0;
+        }
+        fRun = false;
+    }
     
     // здесь в общем разово создать массив статиком и загнать в него заголовки эвентов, чтобы потом только 
     // миди-данные по указател€м мен€ть и все, т.е. mididatas[0] = &midiData[0] 1-го эвента, mididatas[1] - 2го и т.д.
     
-    events.numEvents = 1;
-    events.reserved = 0;
-    static VstMidiEvent event;
+    //read midi datas
+    int midi_messages_count = alsaexchange_midiin_getnewdata((char *) midi_data, sizeof(midi_data));
+    
+    events.numEvents = midi_messages_count;
+    for(int i = 0; i < midi_messages_count; i++)
+    {
+        memcpy(&(event[i].midiData[0]), &midi_data[i * 3], 3);
+    }
+    
+    
     //struct VstMidiEvent
 //{
 //-------------------------------------------------------------------------------------------------------
@@ -525,57 +572,16 @@ void MyVST_BufferUpdate()
 //	char reserved2;			///< zero (Reserved for future use)
 //-------------------------------------------------------------------------------------------------------
 //};
-    //FILL EVENT
-    event.type = kVstMidiType;
-    event.byteSize = 24;//sizeof(VstMidiEvent);
-    event.deltaFrames = 0;
-    event.flags = 0;//kVstMidiEventIsRealtime;
-    event.noteLength = 0;
-    event.noteOffset = 0;
-    event.midiData[0] = 0x90; // 0x90 - note on midi ch #0, 0x91 - note on ch#1 etc..; 0x80 - note off ch0, 0x81-off ch1..
-    event.midiData[1] = 60; // note - [0..127] // 60 = C3 - до посередине
-    event.midiData[2] = 100; // velocity - [0..127]
-    event.midiData[3] = 0; // unused
-    event.detune = 0;
-    event.noteOffVelocity = 0;
-    event.reserved1 = 0;
-    event.reserved2 = 0;
-    
-    static VstMidiEvent event2;
-    event2 = event;
-    event2.midiData[0] = 0x80;
-    event2.midiData[2] = 0;
-    
-   
-    
-    
-    
-    static int cnter = 0;
 
-
-    if(cnter == 0)
+    if(midi_messages_count > 0)
     {
-        events.events[0]=(VstEvent*)&event;
         MyVSTEffect->dispatcher (MyVSTEffect, effProcessEvents, 0, 0, &events, 0);
-        printf("Note On\n");
-    }
-    
-    if(cnter == (44100 / ALSADriverSampleCount))
-    {
-        events.events[0]=(VstEvent*)&event2;
-        MyVSTEffect->dispatcher (MyVSTEffect, effProcessEvents, 0, 0, &events, 0);
-        printf("Note Off\n");   
     }
     
     // dispatcher is :  (AEffect* effect, VstInt32 opcode, VstInt32 index, VstIntPtr value, void* ptr, float opt)
     // effProcessEvents is : [ptr]: #VstEvents*
     
-    
-    cnter++;
-    if(cnter == ((44100 / ALSADriverSampleCount) * 2))
-    {
-        cnter = 0;
-    }
+   
     
     
 	//printf ("HOST> Process Replacing...\n");
@@ -587,6 +593,7 @@ void MyVST_BufferUpdate()
 //////////////////////////////////////////////////////////////////////////
 
 int ALSADriverCurrentIndex = 0;
+int MIDICurrentIndex = 0;
 
 const int VstM_Pix = 45;
 
@@ -608,39 +615,34 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR IpCmdLine
 	RegisterClass(&w);
 
 // 	// создаем экземпл€р класса окна // linux: 260 is settings width
-	H_MAINWINDOW = CreateWindow("Window_nya", "Music Over The World Tool RC4", WS_OVERLAPPEDWINDOW, 300, 250, 575 + 260, 580 + VstM_Pix, NULL, NULL, hInstance, NULL);
+	H_MAINWINDOW = CreateWindow("Window_nya", "ALSA VSTi Host (alsaexchange)", WS_OVERLAPPEDWINDOW, 300, 250, 568, 279, NULL, NULL, hInstance, NULL);
 
-	// создаем раскрывающийс€ список обнаруженных ASIO драйверов
-	H_ASIOLIST = CreateWindow("combobox", NULL, WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_VSCROLL | CBS_DROPDOWN | CBS_AUTOHSCROLL, 658, 10, 147, 150, H_MAINWINDOW, (HMENU)ID_ASIOLIST, hInstance, NULL);
 
-	H_TEXT_ASIOLIST = CreateWindow("static", "ALSA driver:", WS_VISIBLE | WS_CHILD | WS_TABSTOP, 570, 13, 80, 20, H_MAINWINDOW, (HMENU)ID_TEXT_ASIOLIST, hInstance, NULL);
-
-	//создаем экземпл€р класса кнопка открыти€ окна конфигурировани€ выбранного ASIO драйвера
-	H_BTN_ASIO_CFG = CreateWindow("static", "ALSA Config", WS_VISIBLE | WS_CHILD | SS_NOTIFY | WS_TABSTOP | SS_CENTER | WS_BORDER, 570, 50, 130, 25, H_MAINWINDOW, (HMENU)ID_BUTTON_ASIOCONFIG, hInstance, NULL);
     
-    H_BTN_SAMPLES_64 = CreateWindow("static", "64", WS_VISIBLE | WS_CHILD | SS_NOTIFY | WS_TABSTOP | SS_CENTER | WS_BORDER, 130, 50, 40, 20, H_MAINWINDOW, (HMENU)ID_BUTTON_SAMPLES_64, hInstance, NULL);
-    H_BTN_SAMPLES_128 = CreateWindow("static", "128", WS_VISIBLE | WS_CHILD | SS_NOTIFY | WS_TABSTOP | SS_CENTER | WS_BORDER, 130 + ((50 + 5) * 1), 50, 40, 20, H_MAINWINDOW, (HMENU)ID_BUTTON_SAMPLES_128, hInstance, NULL);
-    H_BTN_SAMPLES_256 = CreateWindow("static", "256", WS_VISIBLE | WS_CHILD | SS_NOTIFY | WS_TABSTOP | SS_CENTER | WS_BORDER, 130 + ((50 + 5) * 2), 50, 40, 20, H_MAINWINDOW, (HMENU)ID_BUTTON_SAMPLES_256, hInstance, NULL);
-    H_BTN_SAMPLES_512 = CreateWindow("static", "512", WS_VISIBLE | WS_CHILD | SS_NOTIFY | WS_TABSTOP | SS_CENTER | WS_BORDER, 130 + ((50 + 5) * 3), 50, 40, 20, H_MAINWINDOW, (HMENU)ID_BUTTON_SAMPLES_512, hInstance, NULL);
-    H_BTN_SAMPLES_1024 = CreateWindow("static", "1024", WS_VISIBLE | WS_CHILD | SS_NOTIFY | WS_TABSTOP | SS_CENTER | WS_BORDER, 130 + ((50 + 5) * 4), 50, 40, 20, H_MAINWINDOW, (HMENU)ID_BUTTON_SAMPLES_512, hInstance, NULL);
-
-
-
-	// создаем экземпл€р класса метка, показывающий заполненность буфера полученных по сети данных(из структуры хост сэмпла)
-	H_TEXT_BUF_SIZE = CreateWindow("static", "0", WS_VISIBLE | WS_CHILD | WS_TABSTOP, 250, 25, 40, 20, H_MAINWINDOW, (HMENU)ID_LABEL3, hInstance, NULL);
-	H_TEXT_ASIO_BUFSIZE = CreateWindow("static", "ALSA buffer size:", WS_VISIBLE | WS_CHILD | WS_TABSTOP, 130, 25, 170, 20, H_MAINWINDOW, (HMENU)ID_TEXT_ASIO_BUFSIZE, hInstance, NULL);
-
+    
+    // группа конфигурировани€
+    int c_dx = -270, c_dy = 20;
+	H_TEXT_ASIOLIST = CreateWindow("static", "ALSA:", WS_VISIBLE | WS_CHILD | WS_TABSTOP, 570 + c_dx + 40, 13 + c_dy, 35, 20, H_MAINWINDOW, (HMENU)ID_TEXT_ASIOLIST, hInstance, NULL);
+    H_ASIOLIST = CreateWindow("combobox", NULL, WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_VSCROLL | CBS_DROPDOWN | CBS_AUTOHSCROLL, 658 + c_dx, 10 + c_dy, 147, 150, H_MAINWINDOW, (HMENU)ID_ASIOLIST, hInstance, NULL);
+    H_BTN_ASIO_CFG = CreateWindow("static", "ALSA Config", WS_VISIBLE | WS_CHILD | SS_NOTIFY | WS_TABSTOP | SS_CENTER | WS_BORDER, 570 + c_dx + 60, 50 + c_dy, 130, 25, H_MAINWINDOW, (HMENU)ID_BUTTON_ASIOCONFIG, hInstance, NULL);
+    H_TEXT_MIDILIST = CreateWindow("static", "MIDI:", WS_VISIBLE | WS_CHILD | WS_TABSTOP, 570 + c_dx + 40 + 10, 90 + c_dy, 35, 20, H_MAINWINDOW, (HMENU)ID_TEXT_MIDILIST, hInstance, NULL);
+    H_MIDILIST = CreateWindow("combobox", NULL, WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_VSCROLL | CBS_DROPDOWN | CBS_AUTOHSCROLL, 658 + c_dx, 90 + c_dy, 147, 150, H_MAINWINDOW, (HMENU)ID_MIDILIST, hInstance, NULL);
+	
+	
+    
+    // группа задежки и громкости
+    H_BTN_SAMPLES_64 = CreateWindow("static", "64", WS_VISIBLE | WS_CHILD | SS_NOTIFY | WS_TABSTOP | SS_CENTER | WS_BORDER, 30, 50, 40, 20, H_MAINWINDOW, (HMENU)ID_BUTTON_SAMPLES_64, hInstance, NULL);
+    H_BTN_SAMPLES_128 = CreateWindow("static", "128", WS_VISIBLE | WS_CHILD | SS_NOTIFY | WS_TABSTOP | SS_CENTER | WS_BORDER, 30 + ((50 + 5) * 1), 50, 40, 20, H_MAINWINDOW, (HMENU)ID_BUTTON_SAMPLES_128, hInstance, NULL);
+    H_BTN_SAMPLES_256 = CreateWindow("static", "256", WS_VISIBLE | WS_CHILD | SS_NOTIFY | WS_TABSTOP | SS_CENTER | WS_BORDER, 30 + ((50 + 5) * 2), 50, 40, 20, H_MAINWINDOW, (HMENU)ID_BUTTON_SAMPLES_256, hInstance, NULL);
+    H_BTN_SAMPLES_512 = CreateWindow("static", "512", WS_VISIBLE | WS_CHILD | SS_NOTIFY | WS_TABSTOP | SS_CENTER | WS_BORDER, 30 + ((50 + 5) * 3), 50, 40, 20, H_MAINWINDOW, (HMENU)ID_BUTTON_SAMPLES_512, hInstance, NULL);
+    H_BTN_SAMPLES_1024 = CreateWindow("static", "1024", WS_VISIBLE | WS_CHILD | SS_NOTIFY | WS_TABSTOP | SS_CENTER | WS_BORDER, 30 + ((50 + 5) * 4), 50, 40, 20, H_MAINWINDOW, (HMENU)ID_BUTTON_SAMPLES_512, hInstance, NULL);
+	H_TEXT_BUF_SIZE = CreateWindow("static", "0", WS_VISIBLE | WS_CHILD | WS_TABSTOP, 200, 25, 40, 20, H_MAINWINDOW, (HMENU)ID_LABEL3, hInstance, NULL);
+	H_TEXT_ASIO_BUFSIZE = CreateWindow("static", "ALSA buffer size:", WS_VISIBLE | WS_CHILD | WS_TABSTOP, 80, 25, 170, 20, H_MAINWINDOW, (HMENU)ID_TEXT_ASIO_BUFSIZE, hInstance, NULL);
 	int POff_ip1 = 9;
 	int POff_ip2 = -17 + 1;
 	int POff_ip3 = POff_ip2 + 3 + 1;
-	
-
 	int PixelOffset = 40;
-
-
     PixelOffset += 15;
-
-
 	int PixelOffset2 = 66;
 	// создаем экземпл€р класса метка, показывающа€ "output volume:"
 	H_TEXT_OUTPUT_VOLUME = CreateWindow("static", "Output volume", WS_VISIBLE | WS_CHILD | WS_TABSTOP, 32, 35 + PixelOffset2 - 10, 105, 20, H_MAINWINDOW, (HMENU)ID_LABEL8, hInstance, NULL);
@@ -649,33 +651,25 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR IpCmdLine
 	// создаем экземпл€р класса метка, показывающа€ выходную громкость * 100
 	H_TEXT_OUTPUT_VOL_CNT = CreateWindow("static", "0", WS_VISIBLE | WS_CHILD | WS_TABSTOP, VolLabel[VOL_LBL_OUT].x = 275, VolLabel[VOL_LBL_OUT].y = 35 + PixelOffset2, VolLabel[VOL_LBL_OUT].lenX = 40, VolLabel[VOL_LBL_OUT].lenY = 20, H_MAINWINDOW, (HMENU)ID_LABEL1, hInstance, NULL);
 
-    
-	H_TEXT_VSTPLUGIN = CreateWindow("static", "Input VST:", WS_VISIBLE | WS_CHILD | WS_TABSTOP, 32 + 9, 165, 76, 25, H_MAINWINDOW, (HMENU)ID_TEXT_VSTPLUGIN, hInstance, NULL);
+    // группа выбора всти
+	H_TEXT_VSTPLUGIN = CreateWindow("static", "VSTi:", WS_VISIBLE | WS_CHILD | WS_TABSTOP, 32 + 9 + 20, 165, 76 - 30, 25, H_MAINWINDOW, (HMENU)ID_TEXT_VSTPLUGIN, hInstance, NULL);
 	H_VSTLIST = CreateWindow("combobox", NULL, WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_VSCROLL | CBS_DROPDOWN | CBS_AUTOHSCROLL, 114 + 3, 162, 204 - 3, 150, H_MAINWINDOW, (HMENU)ID_VSTLIST, hInstance, NULL);
 	H_BTN_SHOWVST = CreateWindow("static", "e", WS_VISIBLE | WS_CHILD | SS_NOTIFY | WS_TABSTOP | SS_CENTER | WS_BORDER, 330, 165, 25, 25, H_MAINWINDOW, (HMENU)ID_BTN_SHOWVST, hInstance, NULL);
 
+    //группа сохранени€ мастер стрима
 	int PixelOffsetVSTi = 43;
-
 	int PixelOffsetVST_m = 43 + 43;
-
 	// чекбокс записи всего выходного аудиопотока в файл
 	H_CB_SAVEWAVE=CreateWindow("button", "Save master stream", WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | BS_AUTOCHECKBOX, 380, 163/* + PixelOffsetVSTi/2*/, 150, 30, H_MAINWINDOW, (HMENU)ID_CHECKBOX_SAVEWAVE, hInstance, NULL);
-	
 	PixelOffset -= -35;
-
 	#define CLIENT_PIX_OFFSET 33
-
 	int XOffset = 7;
-
 	PixelOffsetVSTi = 50 + VstM_Pix;
-
-	
 	PixelOffset += 123 + (i * CLIENT_PIX_OFFSET);
-
 	// создаем экземпл€р класса метка, показывающа€ "filename.wav saved"
 	//"C:\\Nyashkoshkkko\'s Music Over The World\\Nyashkoshkkko\'s Music Over The World\\smallwin32\\2012_12_25 17_51_10.wav saved"
 	//"\\2012_12_25 17_51_10.wav saved"
-	CreateWindow("static", "", WS_VISIBLE | WS_CHILD | WS_TABSTOP, 382, 195, 140, 80, H_MAINWINDOW, (HMENU)ID_LABEL12, hInstance, NULL);
+	CreateWindow("static", "", WS_VISIBLE | WS_CHILD | WS_TABSTOP, 382, 195, 140, 42, H_MAINWINDOW, (HMENU)ID_LABEL12, hInstance, NULL);
 
 	
 
@@ -685,11 +679,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR IpCmdLine
 
 	//add 17.12.2012 - new user interface
 	// создаем массив хэндлов дл€ пробега интерфейса через один цикл
-	#define HWND_INTERFACE_CNT (18)
+	#define HWND_INTERFACE_CNT (20)
 	HWND H_ALL[HWND_INTERFACE_CNT];
 	i = 0;
 	H_ALL[i++] = H_MAINWINDOW;
 	H_ALL[i++] = H_ASIOLIST;
+    H_ALL[i++] = H_MIDILIST;
 	H_ALL[i++] = H_CB_SAVEWAVE;
 	H_ALL[i++] = H_TEXT_BUF_SIZE;
 	H_ALL[i++] = H_BTN_ASIO_CFG;
@@ -697,6 +692,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR IpCmdLine
 	H_ALL[i++] = H_TEXT_OUTPUT_VOL_CNT;
 	H_ALL[i++] = H_SLIDER_OUTPUT_VOLUME;
 	H_ALL[i++] = H_TEXT_ASIOLIST;
+    H_ALL[i++] = H_TEXT_MIDILIST;
 	H_ALL[i++] = H_TEXT_VSTPLUGIN;
 	H_ALL[i++] = H_TEXT_ASIO_BUFSIZE;
 	H_ALL[i++] = H_BTN_SHOWVST;
@@ -742,6 +738,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR IpCmdLine
     // read last active alsa index
     ALSADriverCurrentIndex = GetPrivateProfileInt("MAIN","ALSADriverCurrentIndex", 0, (LPSTR)AppIniPath);
     
+    // read last active midi input index
+    MIDICurrentIndex = GetPrivateProfileInt("MAIN","MIDICurrentIndex", 0, (LPSTR)AppIniPath);
+    
     // alsa samples
     ALSADriverSampleCount = GetPrivateProfileInt("MAIN","ALSADriverSampleCount", 256, (LPSTR)AppIniPath);
 
@@ -762,6 +761,19 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR IpCmdLine
 	if(AlsaCount > 0)
     {
         alsaexchange_alsa_run(ALSADriverCurrentIndex, 44100, ALSADriverSampleCount);
+    }
+    
+    //
+    for(i = 0; i < MidiInCount; i++)
+    {
+        SendMessage(H_MIDILIST, CB_ADDSTRING, 0, (LPARAM)(MidiInNames[i]) ); // ƒобавление пункта
+    }
+    SendMessage(H_MIDILIST, CB_SETCURSEL, MIDICurrentIndex, 0); // ¬ыбор текущего элемента списка
+    
+    // запустить поток, если в системе найден хоть один midi input device
+	if(MidiInCount > 0)
+    {
+        alsaexchange_midiin_run(MIDICurrentIndex);
     }
 	
 	// add 18.12.2012 чтение списка установленных вст-плагинов
@@ -844,6 +856,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR IpCmdLine
     // write active alsa driver index to .ini file
     wsprintf(IniFileParam, "%i", ALSADriverCurrentIndex);
 	WritePrivateProfileString("MAIN","ALSADriverCurrentIndex", IniFileParam, (LPSTR)AppIniPath);
+    
+    // write active amidi input device index to .ini file
+    wsprintf(IniFileParam, "%i", MIDICurrentIndex);
+	WritePrivateProfileString("MAIN","MIDICurrentIndex", IniFileParam, (LPSTR)AppIniPath);
     
     // writa alsa samples to .ini file
     wsprintf(IniFileParam, "%i", ALSADriverSampleCount);
@@ -1043,12 +1059,12 @@ LRESULT CALLBACK WndProc(HWND H_HWND, UINT Message, WPARAM wparam,LPARAM lparam)
 			PAINTSTRUCT ps;
 			HDC hDC = BeginPaint(H_MAINWINDOW, &ps);
 			SelectObject(hDC, myPenPink);
-			Rectangle(hDC, 10, 10, 550, 533 + VstM_Pix);
+			Rectangle(hDC, 10, 10, 550, 242);
 			SelectObject(hDC, myPenBlack);
 			Rectangle(hDC, 315, 23, 316, 140);
 			Rectangle(hDC, 32, 147, 533, 148);
-			Rectangle(hDC, 367, 152, 368, 200 + 46 + VstM_Pix-4);
-			Rectangle(hDC, 32, 205 + 46 + VstM_Pix-4, 533, 206 + 46 + VstM_Pix-4);
+			Rectangle(hDC, 367, 152, 368, 230);
+			//Rectangle(hDC, 32, 237, 533, 237 + 1);
 			EndPaint(H_MAINWINDOW, &ps);
 			break;
 		}
@@ -1147,6 +1163,13 @@ LRESULT CALLBACK WndProc(HWND H_HWND, UINT Message, WPARAM wparam,LPARAM lparam)
                 alsaexchange_alsa_stop(ALSADriverCurrentIndex);
                 ALSADriverCurrentIndex = SendMessage(H_ASIOLIST, CB_GETCURSEL, 0, 0);
                 alsaexchange_alsa_run(ALSADriverCurrentIndex, 44100, ALSADriverSampleCount);
+            }
+            
+            if(idCtrl == ID_MIDILIST && code == CBN_SELCHANGE)
+            {
+                alsaexchange_midiin_stop(MIDICurrentIndex);
+                MIDICurrentIndex = SendMessage(H_MIDILIST, CB_GETCURSEL, 0, 0);
+                alsaexchange_midiin_run(MIDICurrentIndex);
             }
 
 			break;

@@ -29,6 +29,18 @@ struct SALSACardRecord
 };
 std::vector<struct SALSACardRecord> SoundCards;
 
+struct SALSAMidiInRecord
+{
+    std::string Name;
+    std::string FullID;
+    bool Online;
+    
+    snd_rawmidi_t * handle;
+    snd_rawmidi_t * handle_o;
+};
+std::vector<struct SALSAMidiInRecord> MidiInputs;
+
+
 // this lib(libalsaexchange.so) call this function for fill sound data from WINAPI part of this application
 int (*FillOutputBuffers)(int * LeftOutput, int * RightOutput, int SamplesCount);
 int LeftOutput[1024], RightOutput[1024]; // temp; then call filling 
@@ -136,7 +148,7 @@ void async_direct_callback(snd_async_handler_t *ahandler)
                         unsigned char *samples[2];
                         int steps[2];
                         
-                        //!! todo доставить в этот коблюк индекс звуковой карты и исходя из нее выбрать кол-во байт(2,3,4)!!
+                        // выбрать кол-во байт(2,3,4)
                         int bps = 16 / 8;  // bytes per sample // default SND_PCM_FORMAT_S16
                         
                         switch(Cur->SampleFormat)
@@ -481,7 +493,7 @@ int alsaexchange_main_init()
         int device_inside_card = -1;
         snd_pcm_info_t * pcminfo;
         snd_pcm_info_alloca(&pcminfo);//FUCKING ALSA PIDORI RAZRABI
-        while(1)
+        while(1) // ALSA audio outs
         {
             snd_card_next(&cardnum); if(cardnum == -1) break;
             std::string devname = "hw:" + std::to_string(cardnum);
@@ -499,6 +511,36 @@ int alsaexchange_main_init()
                 printf("device '%s' (name '%s', id '%s') -> device '%i' can do 'SND_PCM_STREAM_PLAYBACK'\n", devname.c_str(), cardname.c_str(), cardid.c_str(), device_inside_card);
                 
                 SoundCards.push_back({cardname, devname, device_inside_card, false});
+            }
+            snd_ctl_close(handle);
+        }
+        cardnum = -1;
+        while(1)//ALSA raw midi outs
+        {
+            snd_card_next(&cardnum); if(cardnum == -1) break;
+            std::string devname = "hw:" + std::to_string(cardnum);
+            if(snd_ctl_open(&handle, devname.c_str(), 0) < 0) continue;
+            device_inside_card = -1;
+            
+            snd_rawmidi_info_t *info;
+            snd_rawmidi_info_alloca(&info);
+            int subs_in;
+            while(1)
+            {
+                if((snd_ctl_rawmidi_next_device(handle, &device_inside_card) < 0) || (device_inside_card == -1)) break;
+                snd_rawmidi_info_set_device(info, device_inside_card);
+                snd_rawmidi_info_set_stream(info, SND_RAWMIDI_STREAM_INPUT);
+                if(snd_ctl_rawmidi_info(handle, info) < 0) continue;
+                subs_in = snd_rawmidi_info_get_subdevices_count(info);
+                for(int subdev_num = 0; subdev_num < subs_in; subdev_num++)
+                {
+                    snd_rawmidi_info_set_subdevice(info, subdev_num);
+                    if(snd_ctl_rawmidi_info(handle, info) < 0) continue;
+                    printf("device 'hw:%d,%d,%d' (name '%s', subname '%s') can do 'SND_RAWMIDI_STREAM_INPUT'\n", cardnum, device_inside_card, subdev_num, snd_rawmidi_info_get_name(info), snd_rawmidi_info_get_subdevice_name(info));
+                    
+                    MidiInputs.push_back({snd_rawmidi_info_get_subdevice_name(info), std::string("hw:")+std::to_string(cardnum)+","+std::to_string(device_inside_card)+","+std::to_string(subdev_num), false});
+                }
+                
             }
             snd_ctl_close(handle);
         }
@@ -627,7 +669,7 @@ int alsaexchange_main_show(){ return 0; }
 #endif // USING_GTK3
 
 #include "alsaexchange.h"
-extern "C" int alsaexchange_init(int (*FillOutputBuffers_ptr)(int * LeftOutput, int * RightOutput, int SamplesCount), char *** AlsaNames, int * AlsaCount) 
+extern "C" int alsaexchange_init(int (*FillOutputBuffers_ptr)(int * LeftOutput, int * RightOutput, int SamplesCount), char *** AlsaNames, int * AlsaCount, char *** MidiInNames, int * MidiInCount) 
 {
     FillOutputBuffers = FillOutputBuffers_ptr;
     alsaexchange_main_init();
@@ -637,6 +679,13 @@ extern "C" int alsaexchange_init(int (*FillOutputBuffers_ptr)(int * LeftOutput, 
         (*AlsaNames)[i] = (char*)SoundCards[i].Name.c_str();
     }
     *AlsaCount = SoundCards.size();
+    
+    *MidiInNames = new char*[MidiInputs.size()];
+    for(int i = 0; i < MidiInputs.size(); i++)
+    {
+        (*MidiInNames)[i] = (char*)MidiInputs[i].Name.c_str();
+    }
+    *MidiInCount = MidiInputs.size();
     return 0;
 }
 
@@ -674,5 +723,63 @@ extern "C" int alsaexchange_exit()
         }
     }
     
+    for(SALSAMidiInRecord Cur : MidiInputs)
+    {
+        if(Cur.Online)
+        {
+            snd_rawmidi_close(Cur.handle); 
+            snd_rawmidi_close(Cur.handle_o);
+        }
+    }
+    
     return 0;
+}
+
+extern "C" int alsaexchange_midiin_run(int index)
+{
+    if(index < MidiInputs.size())
+    {
+        if(!MidiInputs[index].Online)
+        {
+            printf("opening %s(%s)..", MidiInputs[index].FullID.c_str(), MidiInputs[index].Name.c_str());
+            if(snd_rawmidi_open(&MidiInputs[index].handle, &MidiInputs[index].handle_o, MidiInputs[index].FullID.c_str(), SND_RAWMIDI_NONBLOCK) == 0)
+            {
+                MidiInputs[index].Online = true;
+                printf("OK\n");
+            }
+            else
+            {
+                printf("ERROR\n");
+            }
+        }
+    }
+    return 0;
+}
+
+extern "C" int alsaexchange_midiin_stop(int index)
+{
+    if(index < MidiInputs.size())
+    {
+        if(MidiInputs[index].Online)
+        {
+            printf("closing %s(%s)\n", MidiInputs[index].FullID.c_str(), MidiInputs[index].Name.c_str());
+            snd_rawmidi_close(MidiInputs[index].handle);
+            snd_rawmidi_close(MidiInputs[index].handle_o);
+            MidiInputs[index].Online = false;
+        }
+    }
+    return 0;
+}
+
+extern "C" int alsaexchange_midiin_getnewdata(char * mididata, int BytesAssigned) // ret count of new midi packets recieved
+{
+    for(SALSAMidiInRecord Cur : MidiInputs)
+    {
+        if(Cur.Online)
+        {
+            return (int)snd_rawmidi_read(Cur.handle, mididata, (size_t)BytesAssigned) / 3; // OH SHI, I THINK THAT ALL PACKETS ARE 3-bytes.... its named FUCKED HARD C.O.D.E (nyashkoshkko 030717)
+        }
+    }
+    
+    return 0; 
 }
